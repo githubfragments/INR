@@ -23,6 +23,7 @@ import configargparse
 from functools import partial
 import torch
 import json
+from losses import image_log_mse
 # Define Flags.
 flags.DEFINE_string('data_root',
                     '/home/yannick',
@@ -64,6 +65,10 @@ flags.DEFINE_enum('model_type',
                   'mlp',
                   ['mlp', 'multi', 'multi_tapered', 'parallel'],
                   'Model Architecture.')
+flags.DEFINE_enum('loss',
+                  'mse',
+                  ['mse', 'log_mse'],
+                  'Loss function to use.')
 
 flags.DEFINE_enum('encoding', 'mlp', ['mlp', 'nerf', 'positional', 'gauss'], 'Input encoding type used')
 
@@ -81,7 +86,7 @@ flags.DEFINE_integer('downscaling_factor',
                      'Factor by which in input is downsampled',
                      lower_bound=1)
 flags.DEFINE_list('ff_dims',
-                     ['10', '6', '4'],
+                     None,
                      'Number of fourier feature frequencies for input encoding at different scales')
 flags.DEFINE_bool('bn', False, 'Enable batch norm after linear layers.')
 flags.DEFINE_integer('epochs_til_ckpt', 1000, 'Time interval in seconds until checkpoint is saved.')
@@ -100,7 +105,7 @@ def get_experiment_folder():
       FLAGS.dataset, #'batch_size' + str(FLAGS.batch_size),
       'epochs' + str(FLAGS.epochs), 'lr' + str(FLAGS.lr)])
     exp_name = '_'.join([exp_name,str(FLAGS.model_type)])
-    if FLAGS.model_type in ['multi', 'multi_tapered']:
+    if FLAGS.ff_dims:
         ff_dims = [int(s) for s in FLAGS.ff_dims]
         exp_name = '_'.join([exp_name, str(ff_dims)])
     exp_name = '_'.join([
@@ -189,7 +194,7 @@ def main(_):
             model = modules.SingleBVPNet_INR(type=FLAGS.activation, mode=FLAGS.encoding, sidelength=image_resolution,
                                          out_features=img_dataset.img_channels, hidden_features=FLAGS.hidden_dims,
                                          num_hidden_layers=FLAGS.hidden_layers, encoding_scale=FLAGS.encoding_scale,
-                                         batch_norm=FLAGS.bn)
+                                         batch_norm=FLAGS.bn, ff_dims=FLAGS.ff_dims)
         elif FLAGS.model_type == 'multi_tapered':
             model = modules.MultiScale_INR(type=FLAGS.activation, mode=FLAGS.encoding, sidelength=image_resolution,
                                          out_features=img_dataset.img_channels, hidden_features=FLAGS.hidden_dims,
@@ -208,7 +213,10 @@ def main(_):
 
 
         # Define the loss
-        loss_fn = partial(loss_functions.image_mse, None)
+        if FLAGS.loss == 'mse':
+            loss_fn = partial(loss_functions.image_mse, None)
+        elif FLAGS.loss == 'log_mse':
+            loss_fn = image_log_mse
         summary_fn = partial(siren_utils.write_image_summary, image_resolution)
 
         if FLAGS.model_type == 'parallel':

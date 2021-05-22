@@ -1,5 +1,10 @@
 import torch
 import torch.nn.functional as F
+from siren.loss_functions import image_mse
+
+def image_log_mse(model_output, gt):
+    return {'img_loss': torch.log10(((model_output['model_out'] - gt['img']) ** 2).mean())}
+
 def model_l1(model, l1_lambda):
     l1_norm = sum(p.abs().sum() for p in model.parameters())
     return {'l1_loss': l1_lambda * l1_norm}

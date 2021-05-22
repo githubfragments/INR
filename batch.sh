@@ -108,20 +108,20 @@ dataset='KODAK21'
 #done
 #done
 
-for model_type in 'mlp' 'multi_tapered' #'parallel'
+for model_type in 'mlp' #multi' 'multi_tapered' #'parallel'
 do
 l1_reg=0.0
 activation='sine'
 scale=4
-for encoding in  'gauss' 'nerf'
+for encoding in 'nerf'
 do
-for ff_dims in '8, 4, 2' '2, 4, 8' '4, 4, 4'
+for ff_dims in '8' #'10,8,6' '6,8,10' '8,8,8' '4,6,8' '8,6,4' '6,6,6'
 do
 for hidden_layers in 2
 do
 for hidden_dims in 32 48 64 128
 do
-/home/yannick/anaconda3/envs/INR/bin/python   trainINR.py --ff_dims $ff_dims --model_type $model_type  --dataset $dataset --activation $activation --encoding $encoding --hidden_layers $hidden_layers --hidden_dims $hidden_dims  --l1_reg $l1_reg --encoding_scale $scale
+/home/yannick/anaconda3/envs/INR/bin/python   trainINR.py --exp_root 'exp/exp_log_mse' --loss log_mse --ff_dims $ff_dims --model_type $model_type  --dataset $dataset --activation $activation --encoding $encoding --hidden_layers $hidden_layers --hidden_dims $hidden_dims  --l1_reg $l1_reg --encoding_scale $scale
 done
 done
 done

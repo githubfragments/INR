@@ -85,7 +85,7 @@ for experiment_name in experiment_names:
     exp_folder = os.path.join(exp_root, experiment_name)
     TRAINING_FLAGS = yaml.safe_load(open(os.path.join(exp_folder, 'FLAGS.yml'), 'r'))
 
-    if TRAINING_FLAGS['model_type'] not in ['parallel', 'mlp']: continue
+    if TRAINING_FLAGS['model_type'] not in ['multi', 'multi_tapered', 'mlp']: continue
     if TRAINING_FLAGS['hidden_dims'] not in [32, 48, 64, 128]: continue
     if TRAINING_FLAGS['hidden_layers'] != 2: continue
     # if TRAINING_FLAGS['model_type'] == 'multi_tapered':
@@ -117,6 +117,8 @@ for experiment_name in experiment_names:
             TRAINING_FLAGS['intermediate_losses'] = False
             if 'phased' not in TRAINING_FLAGS:
                 TRAINING_FLAGS['phased'] = False
+        if 'ff_dims' not in TRAINING_FLAGS:
+            TRAINING_FLAGS['ff_dims'] = None
 
         if TRAINING_FLAGS['model_type'] == 'mlp':
             model = modules.SingleBVPNet_INR(type=TRAINING_FLAGS['activation'], mode=TRAINING_FLAGS['encoding'],
@@ -124,21 +126,21 @@ for experiment_name in experiment_names:
                                              out_features=img_dataset.img_channels,
                                              hidden_features=TRAINING_FLAGS['hidden_dims'],
                                              num_hidden_layers=TRAINING_FLAGS['hidden_layers'], encoding_scale=s,
-                                             batch_norm=TRAINING_FLAGS['bn'])
+                                             batch_norm=TRAINING_FLAGS['bn'], ff_dims=TRAINING_FLAGS['ff_dims'])
         elif TRAINING_FLAGS['model_type'] == 'multi_tapered':
             model = modules.MultiScale_INR(type=TRAINING_FLAGS['activation'], mode=TRAINING_FLAGS['encoding'],
                                              sidelength=image_resolution,
                                              out_features=img_dataset.img_channels,
                                              hidden_features=TRAINING_FLAGS['hidden_dims'],
                                              num_hidden_layers=TRAINING_FLAGS['hidden_layers'], encoding_scale=s,
-                                           tapered=True)
+                                           tapered=True, ff_dims=TRAINING_FLAGS['ff_dims'])
         elif TRAINING_FLAGS['model_type'] == 'multi':
             model = modules.MultiScale_INR(type=TRAINING_FLAGS['activation'], mode=TRAINING_FLAGS['encoding'],
                                              sidelength=image_resolution,
                                              out_features=img_dataset.img_channels,
                                              hidden_features=TRAINING_FLAGS['hidden_dims'],
                                              num_hidden_layers=TRAINING_FLAGS['hidden_layers'], encoding_scale=s,
-                                            tapered=False)
+                                            tapered=False, ff_dims=TRAINING_FLAGS['ff_dims'])
         elif TRAINING_FLAGS['model_type'] == 'parallel':
             model = modules.Parallel_INR(type=TRAINING_FLAGS['activation'], mode=TRAINING_FLAGS['encoding'],
                                              sidelength=image_resolution,
@@ -169,7 +171,7 @@ for experiment_name in experiment_names:
         metrics = {'activation': TRAINING_FLAGS['activation'] , 'model_type': TRAINING_FLAGS['model_type'], 'encoding': TRAINING_FLAGS['encoding'], 'hidden_dims': TRAINING_FLAGS['hidden_dims'],
                    'hidden_layers': TRAINING_FLAGS['hidden_layers'], 'mse': statistics.mean(mses),
                    'psnr': statistics.mean(psnrs), 'ssim': statistics.mean(ssims), 'encoding_scale': s, 'num_params': num_params,
-                   'l1_reg': TRAINING_FLAGS['l1_reg'], 'bn': TRAINING_FLAGS['bn'], 'phased' : TRAINING_FLAGS['phased'], 'intermediate_losses' : TRAINING_FLAGS['intermediate_losses']}
+                   'l1_reg': TRAINING_FLAGS['l1_reg'], 'bn': TRAINING_FLAGS['bn'], 'phased' : TRAINING_FLAGS['phased'], 'intermediate_losses' : TRAINING_FLAGS['intermediate_losses'], 'ff_dims': TRAINING_FLAGS['ff_dims']}
 
         # with open(os.path.join(exp_folder, 'result_best.json'), 'w') as fp:
         #         json.dump(metrics, fp)

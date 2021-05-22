@@ -2,12 +2,17 @@ import glob
 import os
 import zlib
 from decimal import Decimal
+from itertools import combinations, permutations, product
+
 import numpy as np
+import scipy
 import skimage
 import PIL
 import torch
-from modules import Sine, ImageDownsampling, PosEncodingNeRF, FourierFeatureEncodingPositional, FourierFeatureEncodingGaussian
+import pandas
 
+from modules import Sine, ImageDownsampling, PosEncodingNeRF, FourierFeatureEncodingPositional, FourierFeatureEncodingGaussian
+import modules
 
 # Compression-related imports
 import yaml
@@ -15,27 +20,24 @@ from aimet_common.defs import CostMetric, CompressionScheme, GreedySelectionPara
 from aimet_torch.defs import WeightSvdParameters, SpatialSvdParameters, ChannelPruningParameters, \
     ModuleCompRatioPair
 from aimet_torch.compress import ModelCompressor
-import sys
 
 from tqdm import tqdm
 
-sys.path.append('')
 #from Quantization import convert_to_nn_module
 # Quantization related import
 from aimet_torch.quantsim import QuantizationSimModel
 from functools import partial
-from siren import loss_functions
+from siren import loss_functions, dataio
 # Both compression and quantization related imports
 from aimet_torch.examples import mnist_torch_model
 from torch.utils.data import DataLoader
 from losses import model_l1
-from siren import modules, dataio
 from aimet_torch.qc_quantize_op import QcPostTrainingWrapper
 from utils import check_metrics, check_metrics_full, convert_to_nn_module
 
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-exp_folder = 'siren/exp/KODAK21_epochs10000_lr0.0001_hdims100_hlayer4_gauss_sine_enc_scale4.0/'
-TRAINING_FLAGS = yaml.safe_load(open(os.path.join(exp_folder, 'FLAGS.yml'), 'r'))
+#exp_folder = 'siren/exp/KODAK21_epochs10000_lr0.0001_hdims100_hlayer4_gauss_sine_enc_scale4.0/'
+#TRAINING_FLAGS = yaml.safe_load(open(os.path.join(exp_folder, 'FLAGS.yml'), 'r'))
 image_name = 'kodim21'
 imglob = glob.glob('/home/yannick/KODAK/kodim21.png')
 for im in imglob:
@@ -43,7 +45,7 @@ for im in imglob:
 
     img_dataset = dataio.ImageFile(im)
     img = PIL.Image.open(im)
-    scale = TRAINING_FLAGS['downscaling_factor']
+    scale = 2#TRAINING_FLAGS['downscaling_factor']
     image_resolution = (img.size[1] // scale, img.size[0] // scale)
 
     coord_dataset = dataio.Implicit2DWrapper(img_dataset, sidelength=image_resolution)
@@ -154,7 +156,7 @@ def weight_svd_auto_mode(model, comp_ratio=0.8, retrain=False):
     return compressed_model
 
 
-def quantize_model(model, bitwidth=8):
+def quantize_model(model, bitwidth=8, layerwise_bitwidth=None, retrain=True):
     res = check_metrics(dataloader, model, image_resolution)
     print(res)
     input_shape = coord_dataset.mgrid.shape
@@ -169,14 +171,18 @@ def quantize_model(model, bitwidth=8):
             excl_layers.append(mod)
 
     sim.exclude_layers_from_quantization(excl_layers)
-
-    for mod in sim.model.modules():
+    i=0
+    for name, mod in sim.model.named_modules():
         if isinstance(mod, QcPostTrainingWrapper):
             mod.output_quantizer.enabled = False
             mod.input_quantizer.enabled = False
+
             if torch.count_nonzero(mod._module_to_wrap.bias.data):
                 mod.param_quantizers['bias'].enabled = True
-            mod.param_quantizers['bias'].bitwidth = bitwidth
+            if layerwise_bitwidth:
+                mod.param_quantizers['bias'].bitwidth = layerwise_bitwidth[i]
+                mod.param_quantizers['weight'].bitwidth = layerwise_bitwidth[i]
+                i += 1
     # Quantize the untrained MNIST model
     sim.compute_encodings(forward_pass_callback=evaluate_model, forward_pass_callback_args=5)
 
@@ -188,13 +194,15 @@ def quantize_model(model, bitwidth=8):
     quantized_model = sim.model
     res = check_metrics(dataloader, quantized_model, image_resolution)
     print(res)
-    quantized_model = retrain_model(sim.model, dataloader, 200, loss_fn, 0.0000005, TRAINING_FLAGS['l1_reg'])
-    # Fine-tune the model's parameter using training
-    # torch.save(quantized_model,
-    #            os.path.join(
-    #                os.path.join(exp_folder,
-    #                             image_name + '/checkpoints/model_aimet_quantized_retrained.pth')))
-    res = check_metrics(dataloader, quantized_model, image_resolution)
+
+    if retrain:
+        quantized_model = retrain_model(sim.model, dataloader, 200, loss_fn, 0.0000005,0)# TRAINING_FLAGS['l1_reg'])
+        # Fine-tune the model's parameter using training
+        # torch.save(quantized_model,
+        #            os.path.join(
+        #                os.path.join(exp_folder,
+        #                             image_name + '/checkpoints/model_aimet_quantized_retrained.pth')))
+        res = check_metrics(dataloader, quantized_model, image_resolution)
    # w = sim.model.net.net[0][0]._module_to_wrap.weight
    # q = sim.model.net.net[0][0].param_quantizers['weight']
    # wq = q.quantize(w, q.round_mode)
@@ -207,8 +215,9 @@ def quantize_model(model, bitwidth=8):
             wrapped_linear = module._module_to_wrap
             weight = wrapped_linear.weight
             bias = wrapped_linear.bias
-            quantized_weight = weight_quantizer.quantize(weight, weight_quantizer.round_mode).cpu().detach().numpy()
-            quantized_bias = bias_quantizer.quantize(bias, bias_quantizer.round_mode).cpu().detach().numpy()
+            quantized_weight = weight_quantizer.quantize(weight, weight_quantizer.round_mode).cpu().detach().numpy() #+ weight_quantizer.encoding.offset
+            quantized_bias = bias_quantizer.quantize(bias, bias_quantizer.round_mode).cpu().detach().numpy() #+ bias_quantizer.encoding.offset
+            weights_csc = scipy.sparse.csc_matrix(quantized_weight + weight_quantizer.encoding.offset)
             quantized_dict[name] = {'weight': {'data': quantized_weight, 'encoding': weight_quantizer.encoding}, 'bias': {'data': quantized_bias, 'encoding': bias_quantizer.encoding}}
     weights_np = []
     for l in quantized_dict.values():
@@ -216,22 +225,22 @@ def quantize_model(model, bitwidth=8):
         b = l['bias']['data']
         Q = l['weight']['encoding'].bw
         if Q < 9:
-            tpe = 'int8'
+            tpe = 'uint8'
         elif Q < 17:
-            tpe = 'int16'
+            tpe = 'uint16'
         else:
-            tpe = 'int32'
+            tpe = 'uint32'
         w = w.astype(tpe).flatten()
         weights_np.append(w)
 
         if l['bias']['encoding']:
             Q = l['bias']['encoding'].bw
             if Q < 9:
-                tpe = 'int8'
+                tpe = 'uint8'
             elif Q < 17:
-                tpe = 'int16'
+                tpe = 'uint16'
             else:
-                tpe = 'int32'
+                tpe = 'uint32'
             b = b.astype(tpe).flatten()
             weights_np.append(b)
     weights_np = np.concatenate(weights_np)
@@ -249,6 +258,7 @@ if __name__ == '__main__':
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     exp_folder = 'siren/exp/KODAK21_epochs10000_lr0.0001_hdims32_hlayer4_nerf_sine_l1_reg5e-05_enc_scale10.0/'
     #exp_folder = 'siren/exp/KODAK21_epochs10000_lr0.0001_hdims64_hlayer4_nerf_sine_enc_scale10.0/'
+    exp_folder = '/home/yannick/PycharmProjects/INR/exp/KODAK21_epochs10000_lr0.0001_mlp_[8]_hdims64_hlayer2_nerf_sine_enc_scale4.0'
     TRAINING_FLAGS = yaml.safe_load(open(os.path.join(exp_folder, 'FLAGS.yml'), 'r'))
     image_name = 'kodim21'
     imglob = glob.glob('/home/yannick/KODAK/kodim21.png')
@@ -266,10 +276,41 @@ if __name__ == '__main__':
         input_shape = (1, coord_dataset.mgrid.shape[0], coord_dataset.mgrid.shape[1])
         print(input_shape)
         #hu = int(experiment_name.split('hu')[0])
-    model = modules.SingleBVPNet(type=TRAINING_FLAGS['activation'], mode=TRAINING_FLAGS['encoding'], sidelength=image_resolution,
-                                     out_features=img_dataset.img_channels, hidden_features=TRAINING_FLAGS['hidden_dims'], num_hidden_layers=TRAINING_FLAGS['hidden_layers'])
+    if 'encoding_scale' in TRAINING_FLAGS:
+        s = TRAINING_FLAGS['encoding_scale']
 
+    else:
+        s = 0
+    if 'bn' not in TRAINING_FLAGS:
+        TRAINING_FLAGS['bn'] = False
+    if 'intermediate_losses' not in TRAINING_FLAGS:
+        TRAINING_FLAGS['intermediate_losses'] = False
+        if 'phased' not in TRAINING_FLAGS:
+            TRAINING_FLAGS['phased'] = False
+    if 'ff_dims' not in TRAINING_FLAGS:
+        TRAINING_FLAGS['ff_dims'] = None
 
+    if TRAINING_FLAGS['model_type'] == 'mlp':
+        model = modules.SingleBVPNet_INR(type=TRAINING_FLAGS['activation'], mode=TRAINING_FLAGS['encoding'],
+                                         sidelength=image_resolution,
+                                         out_features=img_dataset.img_channels,
+                                         hidden_features=TRAINING_FLAGS['hidden_dims'],
+                                         num_hidden_layers=TRAINING_FLAGS['hidden_layers'], encoding_scale=s,
+                                         batch_norm=TRAINING_FLAGS['bn'], ff_dims=TRAINING_FLAGS['ff_dims'])
+    elif TRAINING_FLAGS['model_type'] == 'multi_tapered':
+        model = modules.MultiScale_INR(type=TRAINING_FLAGS['activation'], mode=TRAINING_FLAGS['encoding'],
+                                       sidelength=image_resolution,
+                                       out_features=img_dataset.img_channels,
+                                       hidden_features=TRAINING_FLAGS['hidden_dims'],
+                                       num_hidden_layers=TRAINING_FLAGS['hidden_layers'], encoding_scale=s,
+                                       tapered=True, ff_dims=TRAINING_FLAGS['ff_dims'])
+    elif TRAINING_FLAGS['model_type'] == 'multi':
+        model = modules.MultiScale_INR(type=TRAINING_FLAGS['activation'], mode=TRAINING_FLAGS['encoding'],
+                                       sidelength=image_resolution,
+                                       out_features=img_dataset.img_channels,
+                                       hidden_features=TRAINING_FLAGS['hidden_dims'],
+                                       num_hidden_layers=TRAINING_FLAGS['hidden_layers'], encoding_scale=s,
+                                       tapered=False, ff_dims=TRAINING_FLAGS['ff_dims'])
     model = model.to(device)
         #state_dict = torch.load('siren/experiment_scripts/logs/' + experiment_name + image_name + '/checkpoints/model_current.pth', map_location='cpu')
     state_dict = torch.load(os.path.join(exp_folder, image_name + '/checkpoints/model_best_.pth'), map_location='cpu')
@@ -285,8 +326,18 @@ if __name__ == '__main__':
 
     #weight_svd_manual_mode()
     #model = weight_svd_auto_mode(model)
-    quantized_model = quantize_model(model)
+    df_list = []
+    linear_layer_count = sum([isinstance(module, torch.nn.Linear) for module in model.modules()])
+    all_combinations = product(range(6,9), repeat=linear_layer_count)
+    for comb in all_combinations:
+        quantized_model, res, bytes = quantize_model(model, layerwise_bitwidth=comb, retrain=False)
+        mse, ssim, psnr = res
+        df_list.append({'bitwidths': comb, 'psnr': psnr, 'bytes': bytes})
+    df = pandas.DataFrame.from_records(df_list)
    # channel_pruning_manual_mode()
     #channel_pruning_auto_mode()
 
     #quantize_model(mnist_torch_model.train)
+    df.plot.scatter(x='bytes', y='psnr')
+    import matplotlib.pyplot as plt
+    plt.show()
