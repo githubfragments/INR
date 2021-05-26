@@ -194,6 +194,132 @@ class Parallel_INR(nn.Module):
         return model_output
 
 
+class SingleBVPNet_INR_nodetach(MetaModule):
+    '''A canonical representation network for a BVP with additional support for Fourier Featrues'''
+
+    def __init__(self, out_features=1, type='sine', in_features=2,
+                 mode='mlp', hidden_features=256, num_hidden_layers=3, batch_norm=False, ff_dims=None, **kwargs):
+        super().__init__()
+        self.mode = mode
+        num_frequencies = None
+        if ff_dims and len(ff_dims) == 1:
+            num_frequencies = int(ff_dims[0])
+        if self.mode == 'rbf':
+            self.rbf_layer = RBFLayer(in_features=in_features, out_features=kwargs.get('rbf_centers', 1024))
+            in_features = kwargs.get('rbf_centers', 1024)
+        elif self.mode == 'nerf':
+            self.positional_encoding = PosEncodingNeRF(in_features=in_features,
+                                                       sidelength=kwargs.get('sidelength', None),
+                                                       fn_samples=kwargs.get('fn_samples', None),
+                                                       use_nyquist=kwargs.get('use_nyquist', True),
+                                                       num_frequencies=num_frequencies)
+            in_features = self.positional_encoding.out_dim
+
+        elif self.mode == 'positional':
+            num_frq = num_frequencies if num_frequencies else hidden_features//2
+            self.positional_encoding = FourierFeatureEncodingPositional(in_features=in_features, num_frequencies=num_frq, scale=kwargs.get('encoding_scale',6.0))
+            in_features = self.positional_encoding.out_dim
+        elif self.mode == 'gauss':
+            num_frq = num_frequencies if num_frequencies else hidden_features
+            self.positional_encoding = FourierFeatureEncodingGaussian(in_features=in_features, num_frequencies=num_frq, scale=kwargs.get('encoding_scale',6.0))
+            in_features = self.positional_encoding.out_dim
+
+        self.image_downsampling = ImageDownsampling(sidelength=kwargs.get('sidelength', None),
+                                                    downsample=kwargs.get('downsample', False))
+        self.batch_norm = batch_norm
+        if batch_norm:
+            self.net = FCBlock_BN(in_features=in_features, out_features=out_features, num_hidden_layers=num_hidden_layers,
+                               hidden_features=hidden_features, outermost_linear=True, nonlinearity=type)
+        else:
+            self.net = FCBlock(in_features=in_features, out_features=out_features, num_hidden_layers=num_hidden_layers,
+                           hidden_features=hidden_features, outermost_linear=True, nonlinearity=type)
+
+        #print(self)
+
+    def forward(self, model_input, params=None):
+        if params is None:
+            params = OrderedDict(self.named_parameters())
+
+        # Enables us to compute gradients w.r.t. coordinates
+        coords_org = model_input['coords']#.clone().detach().requires_grad_(True)
+        coords = coords_org
+
+        # various input processing methods for different applications
+        if self.image_downsampling.downsample:
+            coords = self.image_downsampling(coords)
+        if self.mode == 'rbf':
+            coords = self.rbf_layer(coords)
+        elif self.mode == 'nerf':
+            coords = self.positional_encoding(coords)
+        elif self.mode == 'positional':
+            coords = self.positional_encoding(coords)
+        elif self.mode == 'gauss':
+            coords = self.positional_encoding(coords)
+
+        output = self.net(coords, get_subdict(params, 'net'))
+        return {'model_in': coords_org, 'model_out': output}
+
+    def predict(self, model_input):
+        return self.forward(model_input)
+
+
+    def forward_with_activations(self, model_input):
+        '''Returns not only model output, but also intermediate activations.'''
+        coords = model_input['coords'].clone().detach().requires_grad_(True)
+        activations = self.net.forward_with_activations(coords)
+        return {'model_in': coords, 'model_out': activations.popitem(), 'activations': activations}
+
+
+class INR_Mixture(nn.Module):
+    def __init__(self, out_features=1, type='sine', in_features=2,
+                 mode='mlp', hidden_features=256, num_hidden_layers=3, tapered=False, ff_dims=None,num_components=4, **kwargs):
+        super().__init__()
+        self.mode = mode
+        self.in_features = in_features
+        self.num_components = num_components
+        self.out_features = out_features
+        self.nets = nn.ModuleList()
+        self.hidden_features = hidden_features
+        self.index = None
+        for i in range(num_components):
+            model = SingleBVPNet_INR_nodetach(out_features=out_features, type=type, in_features=in_features,
+                                     mode=mode, hidden_features=hidden_features, num_hidden_layers=num_hidden_layers, **kwargs)
+            self.nets.append(model)
+
+
+    def forward(self, model_input, type=torch.float16):
+        if self.index == None:
+            self.index = self.mapping_function(model_input)
+        index = self.index
+        out = torch.zeros((1, model_input['coords'].shape[1], self.out_features), dtype=type, requires_grad=True).cuda()
+        coords_org = model_input['coords'].clone().detach().requires_grad_(True)
+        coords = coords_org
+        #inp = torch.zeros_like(coords)
+        for comp_idx in range(self.num_components):
+            bool_tensor = index == comp_idx
+            sliced_input = {'coords': coords[bool_tensor]}
+            out_dict = self.nets[comp_idx](sliced_input)
+            out[bool_tensor] = out_dict['model_out'].squeeze()
+            #inp[bool_tensor] = out_dict['model_in']
+
+        return {'model_in': coords_org, 'model_out': out}
+
+
+
+    def mapping_function(self, input):
+        num_per_axis = int(torch.pow(torch.tensor(self.num_components), torch.tensor(1 / self.in_features)))
+        intervals = torch.linspace(-1, 1, steps=int(torch.pow(torch.tensor(self.num_components), torch.tensor(1/self.in_features))) + 1)
+        index = torch.zeros_like(input['coords'][:, :, 0])
+        for j in range(self.in_features):
+            temp_index = torch.zeros_like(input['coords'][:, :, 0])
+            for i in intervals[:-1]: #skip last interval boundary
+                temp_index += input['coords'][:,:,j] >= i
+            index += (temp_index - 1)* (j * num_per_axis if j > 0 else 1)
+        return index
+    def predict(self, model_input):
+        return self.forward(model_input, type=torch.float32)
+
+
 class MultiScale_INR(MetaModule):
     '''A canonical representation network for a BVP with additional support for Fourier Featrues'''
 

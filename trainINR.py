@@ -63,7 +63,7 @@ flags.DEFINE_enum('activation',
                   'Activation Function.')
 flags.DEFINE_enum('model_type',
                   'mlp',
-                  ['mlp', 'multi', 'multi_tapered', 'parallel'],
+                  ['mlp', 'multi', 'multi_tapered', 'parallel', 'mixture'],
                   'Model Architecture.')
 flags.DEFINE_enum('loss',
                   'mse',
@@ -94,6 +94,7 @@ flags.DEFINE_integer('steps_til_summary', 1000, 'Time interval in seconds until 
 flags.DEFINE_float('encoding_scale', 0.0, 'Standard deviation of the encoder')
 flags.DEFINE_bool('phased', False, 'Enable phased training for parallel architecture.')
 flags.DEFINE_bool('intermediate_losses', False, 'Enable intermediate losses for parallel architecture.')
+flags.DEFINE_integer('num_components', 1, 'Number of components used in the mixture of INRs')
 FLAGS = flags.FLAGS
 
 
@@ -105,6 +106,8 @@ def get_experiment_folder():
       FLAGS.dataset, #'batch_size' + str(FLAGS.batch_size),
       'epochs' + str(FLAGS.epochs), 'lr' + str(FLAGS.lr)])
     exp_name = '_'.join([exp_name,str(FLAGS.model_type)])
+    if FLAGS.model_type == 'mixture':
+        exp_name = '_'.join([exp_name, FLAGS.num_components])
     if FLAGS.ff_dims:
         ff_dims = [int(s) for s in FLAGS.ff_dims]
         exp_name = '_'.join([exp_name, str(ff_dims)])
@@ -208,6 +211,11 @@ def main(_):
                                          out_features=img_dataset.img_channels, hidden_features=[FLAGS.hidden_dims//4, FLAGS.hidden_dims//2, FLAGS.hidden_dims],
                                          num_hidden_layers=FLAGS.hidden_layers , encoding_scale=FLAGS.encoding_scale)
 
+        elif FLAGS.model_type == 'mixture':
+            model = modules.INR_Mixture(type=FLAGS.activation, mode=FLAGS.encoding, sidelength=image_resolution,
+                                         out_features=img_dataset.img_channels, hidden_features=FLAGS.hidden_dims,
+                                         num_hidden_layers=FLAGS.hidden_layers, encoding_scale=FLAGS.encoding_scale,
+                                         batch_norm=FLAGS.bn, ff_dims=FLAGS.ff_dims, num_components=FLAGS.num_components)
         model.cuda()
         root_path = os.path.join(experiment_folder,image_name)
 
