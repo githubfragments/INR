@@ -107,7 +107,7 @@ def get_experiment_folder():
       'epochs' + str(FLAGS.epochs), 'lr' + str(FLAGS.lr)])
     exp_name = '_'.join([exp_name,str(FLAGS.model_type)])
     if FLAGS.model_type == 'mixture':
-        exp_name = '_'.join([exp_name, FLAGS.num_components])
+        exp_name = '_'.join([exp_name, str(FLAGS.num_components)])
     if FLAGS.ff_dims:
         ff_dims = [int(s) for s in FLAGS.ff_dims]
         exp_name = '_'.join([exp_name, str(ff_dims)])
