@@ -275,6 +275,7 @@ class INR_Mixture(nn.Module):
                  mode='mlp', hidden_features=256, num_hidden_layers=3, tapered=False, ff_dims=None,num_components=4, **kwargs):
         super().__init__()
         self.mode = mode
+        self.use_meta = True
         self.in_features = in_features
         self.num_components = num_components
         self.out_features = out_features
@@ -291,18 +292,40 @@ class INR_Mixture(nn.Module):
         if self.index == None:
             self.index = self.mapping_function(model_input)
         index = self.index
-        out = torch.zeros((1, model_input['coords'].shape[1], self.out_features), dtype=type, requires_grad=True).cuda()
-        coords_org = model_input['coords'].clone().detach().requires_grad_(True)
-        coords = coords_org
+
+
+        if self.use_meta:
+            # Enables us to compute gradients w.r.t. coordinates
+            out = torch.zeros((1, model_input['coords'].shape[1], self.out_features), dtype=type,
+                              requires_grad=True).cuda()
+            coords_org = model_input['coords'].clone().detach().requires_grad_(True)
+            coords = coords_org
+        else:
+            out = torch.zeros((1, model_input.shape[1], self.out_features), dtype=torch.float32,
+                              requires_grad=False).cuda()
+            coords_org = model_input
+            coords = coords_org
+
         #inp = torch.zeros_like(coords)
         for comp_idx in range(self.num_components):
             bool_tensor = index == comp_idx
-            sliced_input = {'coords': coords[bool_tensor]}
-            out_dict = self.nets[comp_idx](sliced_input)
-            out[bool_tensor] = out_dict['model_out'].squeeze()
+            if self.use_meta:
+                sliced_input = {'coords': coords[bool_tensor]}
+                out_dict = self.nets[comp_idx](sliced_input)
+                out[bool_tensor] = out_dict['model_out'].squeeze()
+                ret = {'model_in': coords_org, 'model_out': out}
+            else:
+                self.index = self.mapping_function({'coords': model_input})
+                bool_tensor = self.index == comp_idx
+                bool_tensor_i = bool_tensor
+                if len(coords.shape) == 2: bool_tensor_i = bool_tensor.squeeze()
+                sliced_input = coords[bool_tensor_i]
+                out_dict = self.nets[comp_idx](sliced_input)
+                out[bool_tensor] = out_dict.squeeze()
+                ret = out
             #inp[bool_tensor] = out_dict['model_in']
 
-        return {'model_in': coords_org, 'model_out': out}
+        return ret
 
 
 
@@ -317,6 +340,7 @@ class INR_Mixture(nn.Module):
             index += (temp_index - 1)* (j * num_per_axis if j > 0 else 1)
         return index
     def predict(self, model_input):
+
         return self.forward(model_input, type=torch.float32)
 
 

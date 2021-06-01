@@ -1,6 +1,6 @@
 import torch
 import torch.nn.functional as F
-from siren.loss_functions import image_mse
+
 
 def image_log_mse(model_output, gt):
     return {'img_loss': torch.log10(((model_output['model_out'] - gt['img']) ** 2).mean())}
@@ -8,6 +8,12 @@ def image_log_mse(model_output, gt):
 def model_l1(model, l1_lambda):
     l1_norm = sum(p.abs().sum() for p in model.parameters())
     return {'l1_loss': l1_lambda * l1_norm}
+
+def model_l1_diff(ref_model, model, l1_lambda):
+    l1_norm = sum((p - ref_p).abs().sum() for (p, ref_p) in zip(model.parameters(), ref_model.parameters()))
+    return {'l1_loss': l1_lambda * l1_norm}
+
+
 
 def spectral_norm_loss(model, spec_lambda):
     weight_matrices = filter(lambda n: '.weight' in n[0], model.named_parameters())

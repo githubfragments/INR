@@ -68,9 +68,9 @@ def check_metrics(test_loader: DataLoader, model: torch.nn.Module, image_resolut
             p = np.clip(p, a_min=0., a_max=1.)
 
             trgt = (trgt / 2.) + 0.5
-            mse  = skimage.measure.compare_mse(p, trgt)
-            ssim = skimage.measure.compare_ssim(p, trgt, multichannel=True, data_range=1)
-            psnr = skimage.measure.compare_psnr(p, trgt)#, data_range=1)
+            mse = skimage.metrics.mean_squared_error(p, trgt)
+            ssim = skimage.metrics.structural_similarity(p, trgt, multichannel=True, data_range=1)
+            psnr = skimage.metrics.peak_signal_noise_ratio(p, trgt, data_range=1)
 
 
     return mse, ssim, psnr

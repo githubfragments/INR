@@ -26,6 +26,14 @@ df_mlp_quant = pd.DataFrame.from_dict(in_dict)
 with open("plots/mlp_log_mse.pickle", "rb") as file:
     in_dict = pickle.load(file)
 df_log_mse = pd.DataFrame.from_dict(in_dict)
+with open("plots/mixture.pickle", "rb") as file:
+    in_dict = pickle.load(file)
+df_mixture = pd.DataFrame.from_dict(in_dict)
+
+with open("plots/mlp_l1_train.pickle", "rb") as file:
+    in_dict = pickle.load(file)
+df_mlp_l1 = pd.DataFrame.from_dict(in_dict)
+
 with open("baselines/jpeg_matlab{}x.pickle".format(scale), 'rb') as handle:
     jpeg_matlab_dict = pickle.load(handle)
 with open("baselines/jpeg{}x.pickle".format(scale), 'rb') as handle:
@@ -50,6 +58,10 @@ df_mlp_normal = df_mlp[[(True if (d == None or d == ['4', ''])  else False) for 
 df_mlp8 = df_mlp[[(True if d == ['8'] else False) for d in  df_mlp['ff_dims']]]
 # df_mlp4 = df_normal[[(True if d == ['4'] else False) for d in  df_normal['ff_dims']]]
 # df_mlp10 = df_normal[[(True if d == ['10'] else False) for d in  df_normal['ff_dims']]]
+
+df_mlp_l1_positional= df_mlp_l1[df_mlp_l1['encoding'] == 'positional']
+df_mlp_l1_gauss= df_mlp_l1[df_mlp_l1['encoding'] == 'gauss']
+df_mlp_l1_nerf= df_mlp_l1[df_mlp_l1['encoding'] == 'nerf']
 plt.figure(figsize=[100,80])
 
 
@@ -82,12 +94,27 @@ if 1:
 
     # df_mlp.plot.scatter(x='bpp', y='psnr', xlabel='bpp', ylabel='PSNR',
     #                      c='g', ax=ax, label='MLP 2 layers (2-14) freq)')
-    df_mlp8.plot.scatter(x='bpp', y='psnr', xlabel='bpp', ylabel='PSNR',
-                         c='b', ax=ax, label='MLP 2 layers (8 frq.)')
-    df_mlp_quant.plot.scatter(x='bpp', y='psnr', xlabel='bpp', ylabel='PSNR',
-                         c='k', ax=ax, label='MLP (7,7,7,6) quant. (8 frq.)')
-    df_log_mse.plot.scatter(x='bpp', y='psnr', xlabel='bpp', ylabel='PSNR',
-                              c='r', ax=ax, label='MLP log mse (8 frq.)')
+
+
+    # df_mlp8.plot.scatter(x='bpp', y='psnr', xlabel='bpp', ylabel='PSNR',
+    #                      c='y', ax=ax, label='MLP 2 layers (8 frq.)')
+    # df_mlp_quant.plot.scatter(x='bpp', y='psnr', xlabel='bpp', ylabel='PSNR',
+    #                      c='k', ax=ax, label='MLP (7,7,7,6) quant. (8 frq.)')
+    # df_log_mse.plot.scatter(x='bpp', y='psnr', xlabel='bpp', ylabel='PSNR',
+    #                           c='r', ax=ax, label='MLP log mse (8 frq.)')
+
+    df_normal.plot.scatter(x='bpp', y='psnr', xlabel='bpp', ylabel='PSNR',
+                         c='g', ax=ax, label='MLP 4-6 layers (6 frq.)')
+    df_mlp_normal.plot.scatter(x='bpp', y='psnr', xlabel='bpp', ylabel='PSNR',
+                           c='b', ax=ax, label='MLP 2 layers (6 frq.)')
+    # df_mixture.plot.scatter(x='bpp', y='psnr', xlabel='bpp', ylabel='PSNR',
+    #                           c='r', ax=ax, label='Mixture (6 frq.)')
+    df_mlp_l1_positional.plot.scatter(x='bpp', y='psnr', xlabel='bpp', ylabel='PSNR',
+                            c='r', ax=ax, label='MLP L1 positional')
+    df_mlp_l1_gauss.plot.scatter(x='bpp', y='psnr', xlabel='bpp', ylabel='PSNR',
+                                      c='y', ax=ax, label='MLP L1 gauss')
+    df_mlp_l1_nerf.plot.scatter(x='bpp', y='psnr', xlabel='bpp', ylabel='PSNR',
+                                 c='m', ax=ax, label='MLP L1 nerf')
 from itertools import cycle
 cycol = cycle('bgrcmk')
 if False:
@@ -100,6 +127,6 @@ if False:
         df_plot.plot.scatter(x='bpp', y='psnr', xlabel='bpp', ylabel='PSNR',
                              label=str(ff_dims),marker='x', ax=ax, c=next(cycol))
 
-plt.xlim([0,2.0])
-plt.ylim([25,35])
+plt.xlim([0,5.0])
+plt.ylim([25,40])
 plt.show()

@@ -32,7 +32,7 @@ flags.DEFINE_string('exp_root',
                     'exp',
                     'Root directory of experiments.')
 
-flags.DEFINE_enum('dataset', 'KODAK',
+flags.DEFINE_enum('dataset', 'KODAK21',
                   ['KODAK', 'KODAK21'],
                   'Dataset used during training.')
 flags.DEFINE_integer('batch_size',
@@ -191,7 +191,7 @@ def main(_):
 
 
         dataloader = DataLoader(coord_dataset, shuffle=True, batch_size=FLAGS.batch_size, pin_memory=True, num_workers=0)
-
+        linear_decay = {'img_loss': trainingAC.LinearDecaySchedule(1, 1, FLAGS.epochs)}
         # Define the model.
         if FLAGS.model_type == 'mlp':
             model = modules.SingleBVPNet_INR(type=FLAGS.activation, mode=FLAGS.encoding, sidelength=image_resolution,
@@ -235,9 +235,9 @@ def main(_):
         else:
             trainingAC.train(model=model, train_dataloader=dataloader, epochs=FLAGS.epochs, lr=FLAGS.lr,
                          steps_til_summary=FLAGS.steps_til_summary, epochs_til_checkpoint=FLAGS.epochs_til_ckpt,
-                         model_dir=root_path, loss_fn=loss_fn, summary_fn=summary_fn, l1_reg=FLAGS.l1_reg, spec_reg=FLAGS.spec_reg)
+                         model_dir=root_path, loss_fn=loss_fn, summary_fn=summary_fn, l1_reg=FLAGS.l1_reg, spec_reg=FLAGS.spec_reg, loss_schedules=linear_decay)
 
-        mse, ssim, psnr = check_metrics(dataloader, model, image_resolution)
+        mse, ssim, psnr = utils.check_metrics_full(dataloader, model, image_resolution)
         mses[image_name] = mse
         psnrs[image_name] = psnr
         ssims[image_name] = ssim

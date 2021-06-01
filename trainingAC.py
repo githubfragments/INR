@@ -13,7 +13,7 @@ from losses import model_l1, spectral_norm_loss
 
 def train(model, train_dataloader, epochs, lr, steps_til_summary, epochs_til_checkpoint, model_dir, loss_fn,
           summary_fn, val_dataloader=None, double_precision=False, clip_grad=False, use_lbfgs=False, loss_schedules=None,
-          weight_decay=0, l1_reg=0, spec_reg=0):
+          weight_decay=0, l1_reg=0,  l1_loss_fn=model_l1,  spec_reg=0):
 
     optim = torch.optim.Adam(lr=lr, params=model.parameters(), weight_decay=weight_decay)
 
@@ -82,7 +82,7 @@ def train(model, train_dataloader, epochs, lr, steps_til_summary, epochs_til_che
                     model_output = model(model_input)
                     losses = loss_fn(model_output, gt)
                     if l1_reg > 0:
-                        l1_loss = model_l1(model, l1_reg)
+                        l1_loss = l1_loss_fn(model, l1_reg)
                         losses = {**losses, **l1_loss}
                     if spec_reg > 0:
                         spec_loss = spectral_norm_loss(model, spec_reg)
@@ -102,6 +102,7 @@ def train(model, train_dataloader, epochs, lr, steps_til_summary, epochs_til_che
 
                     train_losses.append(train_loss.item())
                     writer.add_scalar("total_train_loss", train_loss, total_steps)
+
                     if train_loss < best_mse:
                         best_mse = train_loss
                         best_state_dict = model.state_dict()
@@ -151,6 +152,8 @@ def train(model, train_dataloader, epochs, lr, steps_til_summary, epochs_til_che
                    os.path.join(checkpoints_dir, 'model_best_.pth'))
         np.savetxt(os.path.join(checkpoints_dir, 'train_losses_final.txt'),
                    np.array(train_losses))
+
+        model.load_state_dict(best_state_dict, strict=True)
 
 def train_phased(model, train_dataloader, epochs, lr, steps_til_summary, epochs_til_checkpoint, model_dir, loss_fn,
           summary_fn, val_dataloader=None, double_precision=False, clip_grad=False, use_lbfgs=False, loss_schedules=None,

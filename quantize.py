@@ -160,7 +160,7 @@ def quantize_model(model, bitwidth=8, layerwise_bitwidth=None, retrain=True):
     res = check_metrics(dataloader, model, image_resolution)
     print(res)
     input_shape = coord_dataset.mgrid.shape
-    dummy_in = torch.rand(input_shape)
+    dummy_in = (torch.rand(input_shape).unsqueeze(0) * 2) - 1
     sim = QuantizationSimModel(model, default_output_bw=31, default_param_bw=bitwidth, dummy_input=dummy_in.cuda())#,
                                # config_file='quantsim_config/'
                                #             'default_config.json')

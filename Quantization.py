@@ -108,7 +108,7 @@ def mse_func(a,b):
 
 bitrange = [8]#list(range(4, 18, 2))
 
-exp_root = 'exp/exp_log_mse'
+exp_root = 'exp/exp_l1'
 
 
 imglob = glob.glob('/home/yannick/KODAK/kodim21.png')
@@ -125,7 +125,7 @@ experiment_names = [ #'64hu',
 experiment_names = ['KODAK_epochs10000_lr0.0001_hdims32_hlayer4_nerf_sine_enc_scale4.0']
 experiment_names = ['siren/exp/KODAK21_epochs10000_lr0.0001_hdims100_hlayer4_gauss_sine_*enc_scale4.0/']
 experiment_names = [i.split('/')[-4] for i in
-                    glob.glob(exp_root + "/KODAK21_*mlp*_hdims[1346]*_hlayer2*/kodim21/checkpoints/model_best_.pth")]
+                    glob.glob(exp_root + "/KODAK21_*/kodim21/checkpoints/model_best_.pth")]
 #experiment_names = [i.split('/')[-4] for i in
  #                    glob.glob(exp_root + '/KODAK21_epochs10000_lr0.0001_hdims[4]*_hlayer4_nerf_sine*enc_scale10.0/kodim21/checkpoints/model_aimet_0.8.pth')]
 #experiment_names = experiment_names + [i.split('/')[-4] for i in
@@ -170,6 +170,8 @@ for experiment_name in experiment_names:
                 TRAINING_FLAGS['phased'] = False
         if 'ff_dims' not in TRAINING_FLAGS:
             TRAINING_FLAGS['ff_dims'] = None
+        if 'num_components' not in TRAINING_FLAGS:
+            TRAINING_FLAGS['num_components'] = 1
         if TRAINING_FLAGS['model_type'] == 'mlp':
             model = modules.SingleBVPNet_INR(type=TRAINING_FLAGS['activation'], mode=TRAINING_FLAGS['encoding'],
                                              sidelength=image_resolution,
@@ -191,8 +193,14 @@ for experiment_name in experiment_names:
                                            hidden_features=TRAINING_FLAGS['hidden_dims'],
                                            num_hidden_layers=TRAINING_FLAGS['hidden_layers'], encoding_scale=s,
                                            tapered=False, ff_dims=TRAINING_FLAGS['ff_dims'])
-
-
+        elif TRAINING_FLAGS['model_type'] == 'mixture':
+            model = modules.INR_Mixture(type=TRAINING_FLAGS['activation'], mode=TRAINING_FLAGS['encoding'],
+                                        sidelength=image_resolution,
+                                        out_features=img_dataset.img_channels,
+                                        hidden_features=TRAINING_FLAGS['hidden_dims'],
+                                        num_hidden_layers=TRAINING_FLAGS['hidden_layers'], encoding_scale=s,
+                                        batch_norm=TRAINING_FLAGS['bn'], ff_dims=TRAINING_FLAGS['ff_dims'],
+                                        num_components=TRAINING_FLAGS['num_components'])
 
         model = model.to(device)
         #state_dict = torch.load('siren/experiment_scripts/logs/' + experiment_name + image_name + '/checkpoints/model_current.pth', map_location='cpu')
@@ -291,8 +299,10 @@ for experiment_name in experiment_names:
                'hidden_layers': TRAINING_FLAGS['hidden_layers'],'model_type': TRAINING_FLAGS['model_type'],
                'psnr':psnr_mean, 'ssim': ssim_mean, 'encoding_scale': TRAINING_FLAGS['encoding_scale'],
                'bpp': bpp_mean,
-               'l1_reg': TRAINING_FLAGS['l1_reg'], 'bn': TRAINING_FLAGS['bn'] if 'bn' in TRAINING_FLAGS else False,  'phased': TRAINING_FLAGS['phased'],
-     'intermediate_losses': TRAINING_FLAGS['intermediate_losses'], 'ff_dims': TRAINING_FLAGS['ff_dims']}
+               'l1_reg': TRAINING_FLAGS['l1_reg'], 'bn': TRAINING_FLAGS['bn'] if 'bn' in TRAINING_FLAGS else False,
+               'phased': TRAINING_FLAGS['phased'], 'intermediate_losses': TRAINING_FLAGS['intermediate_losses'],
+               'ff_dims': TRAINING_FLAGS['ff_dims'], 'num_components': TRAINING_FLAGS['num_components'],
+               }
 
     df_list.append(metrics)
     df = pandas.DataFrame.from_records(df_list)
@@ -301,7 +311,7 @@ for experiment_name in experiment_names:
     df.plot.scatter(x='bpp', y='psnr', xlabel='bpp', ylabel='PSNR',
                     c='hidden_layers', colormap='viridis')
 
-    plot_name = str(TRAINING_FLAGS['hidden_dims']) + ' units,' + str(TRAINING_FLAGS['hidden_layers']) + ' layers, ' + str(TRAINING_FLAGS['spec_reg'])# + ' l1_reg_' + 'aimet' + str(aimet)
+    plot_name = str(TRAINING_FLAGS['hidden_dims']) + ' units,' + str(TRAINING_FLAGS['hidden_layers']) + ' layers, ' + str(TRAINING_FLAGS['num_components']) + ' components'# + ' l1_reg_' + 'aimet' + str(aimet)
     # plt.figure(1)
     # plt.plot(bitrange, psnr_mean, 'x', label=plot_name)
 
@@ -373,7 +383,7 @@ plt.legend()
 # plt.ylabel('SSIM')
 # plt.legend()
 out_dict = df.to_dict()
-run_name='mlp_log_mse'
+run_name='mlp_l1_train'
 with open("plots/" + run_name + ".pickle", "wb") as output_file:
     pickle.dump(out_dict, output_file)
 
