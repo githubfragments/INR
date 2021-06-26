@@ -53,7 +53,7 @@ def validate(model, device, coords, img, integer=False):
     return mse
 
 
-exp_root = 'exp/maml'
+exp_root = 'exp/maml vs nomaml'
 psnr_list = []
 bpp_list = []
 bitrange = list(range(2, 18, 2))
@@ -123,6 +123,9 @@ for experiment_name in experiment_names:
             TRAINING_FLAGS['ff_dims'] = None
         if 'num_components' not in TRAINING_FLAGS:
             TRAINING_FLAGS['num_components'] = 1
+        is_maml = False
+        if 'maml_epochs' in TRAINING_FLAGS:
+            is_maml = True
         if TRAINING_FLAGS['model_type'] == 'mlp':
             model = modules.SingleBVPNet_INR(type=TRAINING_FLAGS['activation'], mode=TRAINING_FLAGS['encoding'],
                                              sidelength=image_resolution,
@@ -182,7 +185,7 @@ for experiment_name in experiment_names:
                    'hidden_layers': TRAINING_FLAGS['hidden_layers'], 'mse': statistics.mean(mses),
                    'psnr': statistics.mean(psnrs), 'ssim': statistics.mean(ssims), 'encoding_scale': s, 'num_params': num_params,
                    'l1_reg': TRAINING_FLAGS['l1_reg'], 'bn': TRAINING_FLAGS['bn'], 'phased' : TRAINING_FLAGS['phased'], 'intermediate_losses' : TRAINING_FLAGS['intermediate_losses'], 'ff_dims': TRAINING_FLAGS['ff_dims'],
-                   'num_components': TRAINING_FLAGS['num_components']}
+                   'num_components': TRAINING_FLAGS['num_components'], 'is_maml': is_maml}
 
         # with open(os.path.join(exp_folder, 'result_best.json'), 'w') as fp:
         #         json.dump(metrics, fp)
@@ -192,11 +195,11 @@ df = pandas.DataFrame.from_records(df_list)
 #col = df.model_type.map({'multi':'b', 'mlp':'r', 'parallel':'g', 'multi_tapered':'y', 'mixture':'k'})
 labels = df.model_type.map({'multi':'multi', 'mlp':'mlp', 'parallel':'parallel', 'multi_tapered':'multi_tapered'})
 #df.plot( kind = 'scatter',c=col)
-df_mlp = df[df['model_type'] == 'mlp']
-df_mixture = df[df['model_type'] == 'mixture']
+df_maml = df[df['is_maml'] == True]
+df_mlp = df[df['is_maml'] == False]
 ax = df_mlp.plot.scatter(x='num_params', y='psnr', xlabel='Parameters', ylabel='PSNR',
-                     c='r', label='mlp')
-df_mixture.plot.scatter(x='num_params', y='psnr', xlabel='Parameters', ylabel='PSNR',
-                     c='b', label = 'mixture', ax=ax)
+                     c='r', label='random')
+df_maml.plot.scatter(x='num_params', y='psnr', xlabel='Parameters', ylabel='PSNR',
+                     c='b', label = 'maml', ax=ax)
 plt.legend()
 plt.show()
