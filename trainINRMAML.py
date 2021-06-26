@@ -12,7 +12,7 @@ import os
 
 import losses
 
-sys.path.append( os.path.dirname( os.path.dirname( os.path.abspath(__file__) ) ) )
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 sys.path.append("siren")
 import PIL
 from siren import dataio, meta_modules, loss_functions
@@ -30,6 +30,7 @@ import torch
 import json
 from losses import image_log_mse
 import trainingMAML
+
 # Define Flags.
 flags.DEFINE_string('data_root',
                     '/home/yannick',
@@ -52,17 +53,29 @@ flags.DEFINE_integer('epochs',
                      10000,
                      'Maximum number of epochs.',
                      lower_bound=1)
-flags.DEFINE_integer('maml_epochs',
+flags.DEFINE_integer('maml_iterations',
                      1000,
-                     'Maximum number of epochs for MAML training',
+                     'Maximum number of iterations for MAML training',
+                     lower_bound=1)
+flags.DEFINE_integer('maml_batch_size',
+                     24,
+                     'Meta Batch size used during maml training.',
+                     lower_bound=1)
+flags.DEFINE_integer('maml_adaptation_steps',
+                     5,
+                     'Adaptation step during maml training.',
                      lower_bound=1)
 flags.DEFINE_float('lr',
                    0.0001,
                    'Learning rate used during training.',
                    lower_bound=0.0)
-flags.DEFINE_float('maml_lr',
-                   0.01,
-                   'Learning rate used for MAML training.',
+flags.DEFINE_float('inner_lr',
+                   0.0001,
+                   'Learning rate used for the inner loop in during training.',
+                   lower_bound=0.0)
+flags.DEFINE_float('outer_lr',
+                   0.00001,
+                   'Learning rate used for the outer loop in MAML training.',
                    lower_bound=0.0)
 flags.DEFINE_float('l1_reg',
                    0.0,
@@ -72,7 +85,6 @@ flags.DEFINE_float('spec_reg',
                    0,
                    'Spectral regularization. Penalizes the largest singular value of affine layers.',
                    lower_bound=0.0)
-
 
 flags.DEFINE_enum('activation',
                   'sine',
@@ -103,8 +115,8 @@ flags.DEFINE_integer('downscaling_factor',
                      'Factor by which in input is downsampled',
                      lower_bound=1)
 flags.DEFINE_list('ff_dims',
-                     None,
-                     'Number of fourier feature frequencies for input encoding at different scales')
+                  None,
+                  'Number of fourier feature frequencies for input encoding at different scales')
 flags.DEFINE_bool('bn', False, 'Enable batch norm after linear layers.')
 flags.DEFINE_integer('epochs_til_ckpt', 1000, 'Time interval in seconds until checkpoint is saved.')
 flags.DEFINE_integer('steps_til_summary', 1000, 'Time interval in seconds until tensorboard summary is saved.')
@@ -120,9 +132,10 @@ def get_experiment_folder():
 
     # create exp folder
     exp_name = '_'.join([
-      FLAGS.dataset, #'batch_size' + str(FLAGS.batch_size),
-      'epochs' + str(FLAGS.epochs), 'lr' + str(FLAGS.lr)])
-    exp_name = '_'.join([exp_name,str(FLAGS.model_type)])
+        FLAGS.dataset,  # 'batch_size' + str(FLAGS.batch_size),
+        'epochs' + str(FLAGS.epochs), 'lr' + str(FLAGS.lr), 'outer_lr' + str(FLAGS.outer_lr),
+        'inner_lr' + str(FLAGS.inner_lr)])
+    exp_name = '_'.join([exp_name, str(FLAGS.model_type)])
     if FLAGS.model_type == 'mixture':
         exp_name = '_'.join([exp_name, str(FLAGS.num_components)])
     if FLAGS.ff_dims:
@@ -130,7 +143,7 @@ def get_experiment_folder():
         exp_name = '_'.join([exp_name, str(ff_dims)])
     exp_name = '_'.join([
         exp_name, 'hdims' + str(FLAGS.hidden_dims),
-        'hlayer' + str(FLAGS.hidden_layers)
+                  'hlayer' + str(FLAGS.hidden_layers)
     ])
     exp_name = '_'.join([exp_name, str(FLAGS.encoding)])
     exp_name = '_'.join([exp_name, str(FLAGS.activation)])
@@ -147,23 +160,24 @@ def get_experiment_folder():
     if FLAGS.encoding_scale > 0.0:
         exp_name = '_'.join([exp_name, 'enc_scale' + str(FLAGS.encoding_scale)])
 
-
     exp_folder = os.path.join(FLAGS.exp_root, exp_name)
 
     if not os.path.exists(exp_folder):
-
         os.makedirs(exp_folder)
 
     return exp_folder
+
 
 def get_maml_folder():
     """Create string with experiment name and get number of experiment."""
 
     # create exp folder
     exp_name = '_'.join([
-      FLAGS.maml_dataset, #'batch_size' + str(FLAGS.batch_size),
-      'epochs' + str(FLAGS.maml_epochs), 'lr' + str(FLAGS.maml_lr)])
-    exp_name = '_'.join([exp_name,str(FLAGS.model_type)])
+        'MAML', FLAGS.maml_dataset, 'batch_size' + str(FLAGS.maml_batch_size),
+                                    'iterations' + str(FLAGS.maml_iterations), 'outer_lr' + str(FLAGS.outer_lr),
+                                    'inner_lr' + str(FLAGS.inner_lr),
+                                    'adapt_steps' + str(FLAGS.maml_adaptation_steps)])
+    exp_name = '_'.join([exp_name, str(FLAGS.model_type)])
     if FLAGS.model_type == 'mixture':
         exp_name = '_'.join([exp_name, str(FLAGS.num_components)])
     if FLAGS.ff_dims:
@@ -171,25 +185,19 @@ def get_maml_folder():
         exp_name = '_'.join([exp_name, str(ff_dims)])
     exp_name = '_'.join([
         exp_name, 'hdims' + str(FLAGS.hidden_dims),
-        'hlayer' + str(FLAGS.hidden_layers)
+                  'hlayer' + str(FLAGS.hidden_layers)
     ])
     exp_name = '_'.join([exp_name, str(FLAGS.encoding)])
     exp_name = '_'.join([exp_name, str(FLAGS.activation)])
     if FLAGS.encoding_scale > 0.0:
         exp_name = '_'.join([exp_name, 'enc_scale' + str(FLAGS.encoding_scale)])
 
-    exp_folder = os.path.join(FLAGS.exp_root, 'maml',  exp_name)
+    exp_folder = os.path.join(FLAGS.exp_root, 'maml', exp_name)
 
     if not os.path.exists(exp_folder):
-
         os.makedirs(exp_folder)
 
     return exp_folder
-
-
-
-
-
 
 
 def main(_):
@@ -204,49 +212,50 @@ def main(_):
     yaml.dump(FLAGS.flag_values_dict(), open(os.path.join(experiment_folder, 'FLAGS.yml'), 'w'))
     img_dataset = []
     for i, im in enumerate(imglob_maml):
-        print('Image: ' + str(i))
         image_name = im.split('/')[-1].split('.')[0]
         img_dataset.append(dataio.ImageFile(im))
         img = PIL.Image.open(im)
         image_resolution = (img.size[1] // FLAGS.downscaling_factor, img.size[0] // FLAGS.downscaling_factor)
 
-        #run_name = image_name + '_layers' + str(layers) + '_units' + str(hidden_units) + '_model' + FLAGS.model_type
+        # run_name = image_name + '_layers' + str(layers) + '_units' + str(hidden_units) + '_model' + FLAGS.model_type
     coord_dataset = dataio.Implicit2DListWrapper(img_dataset, sidelength=image_resolution)
 
-
     dataloader = DataLoader(coord_dataset, shuffle=True, batch_size=FLAGS.batch_size, pin_memory=True, num_workers=0)
-    #linear_decay = {'img_loss': trainingAC.LinearDecaySchedule(1, 1, FLAGS.epochs)}
+    # linear_decay = {'img_loss': trainingAC.LinearDecaySchedule(1, 1, FLAGS.epochs)}
     # Define the model.
     if FLAGS.model_type == 'mlp':
         model = modules.SingleBVPNet_INR(type=FLAGS.activation, mode=FLAGS.encoding, sidelength=image_resolution,
-                                     out_features=img_dataset[0].img_channels, hidden_features=FLAGS.hidden_dims,
-                                     num_hidden_layers=FLAGS.hidden_layers, encoding_scale=FLAGS.encoding_scale,
-                                     batch_norm=FLAGS.bn, ff_dims=FLAGS.ff_dims)
+                                         out_features=img_dataset[0].img_channels, hidden_features=FLAGS.hidden_dims,
+                                         num_hidden_layers=FLAGS.hidden_layers, encoding_scale=FLAGS.encoding_scale,
+                                         batch_norm=FLAGS.bn, ff_dims=FLAGS.ff_dims)
     elif FLAGS.model_type == 'multi_tapered':
         model = modules.MultiScale_INR(type=FLAGS.activation, mode=FLAGS.encoding, sidelength=image_resolution,
-                                     out_features=img_dataset[0].img_channels, hidden_features=FLAGS.hidden_dims,
-                                     num_hidden_layers=FLAGS.hidden_layers, encoding_scale=FLAGS.encoding_scale, tapered=True, downsample=False, ff_dims=FLAGS.ff_dims)
+                                       out_features=img_dataset[0].img_channels, hidden_features=FLAGS.hidden_dims,
+                                       num_hidden_layers=FLAGS.hidden_layers, encoding_scale=FLAGS.encoding_scale,
+                                       tapered=True, downsample=False, ff_dims=FLAGS.ff_dims)
     elif FLAGS.model_type == 'multi':
         model = modules.MultiScale_INR(type=FLAGS.activation, mode=FLAGS.encoding, sidelength=image_resolution,
-                                     out_features=img_dataset[0].img_channels, hidden_features=FLAGS.hidden_dims,
-                                     num_hidden_layers=FLAGS.hidden_layers, encoding_scale=FLAGS.encoding_scale, tapered=False,  downsample=False, ff_dims=FLAGS.ff_dims)
+                                       out_features=img_dataset[0].img_channels, hidden_features=FLAGS.hidden_dims,
+                                       num_hidden_layers=FLAGS.hidden_layers, encoding_scale=FLAGS.encoding_scale,
+                                       tapered=False, downsample=False, ff_dims=FLAGS.ff_dims)
     elif FLAGS.model_type == 'parallel':
         model = modules.Parallel_INR(type=FLAGS.activation, mode=FLAGS.encoding, sidelength=image_resolution,
-                                     out_features=img_dataset[0].img_channels, hidden_features=[FLAGS.hidden_dims//4, FLAGS.hidden_dims//2, FLAGS.hidden_dims],
-                                     num_hidden_layers=FLAGS.hidden_layers , encoding_scale=FLAGS.encoding_scale)
+                                     out_features=img_dataset[0].img_channels,
+                                     hidden_features=[FLAGS.hidden_dims // 4, FLAGS.hidden_dims // 2,
+                                                      FLAGS.hidden_dims],
+                                     num_hidden_layers=FLAGS.hidden_layers, encoding_scale=FLAGS.encoding_scale)
 
     elif FLAGS.model_type == 'mixture':
         model = modules.INR_Mixture(type=FLAGS.activation, mode=FLAGS.encoding, sidelength=image_resolution,
-                                     out_features=img_dataset[0].img_channels, hidden_features=FLAGS.hidden_dims,
-                                     num_hidden_layers=FLAGS.hidden_layers, encoding_scale=FLAGS.encoding_scale,
-                                     batch_norm=FLAGS.bn, ff_dims=FLAGS.ff_dims, num_components=FLAGS.num_components)
+                                    out_features=img_dataset[0].img_channels, hidden_features=FLAGS.hidden_dims,
+                                    num_hidden_layers=FLAGS.hidden_layers, encoding_scale=FLAGS.encoding_scale,
+                                    batch_norm=FLAGS.bn, ff_dims=FLAGS.ff_dims, num_components=FLAGS.num_components)
     # exp_root = 'exp/maml'
     # experiment_names = [i.split('/')[-4] for i in
     #                     glob.glob(exp_root + '/KODAK21_epochs10000_lr0.0001_mlp_hdims100_hlayer2_mlp_sine_l1_reg0.001/maml/checkpoints/')]
     # state_dict = torch.load(os.path.join('KODAK21_epochs10000_lr0.0001_mlp_hdims100_hlayer2_mlp_sine_l1_reg0.001', 'maml' + '/checkpoints/model_best_.pth'), map_location='cpu').load_state_dict(state_dict, strict=True)
     model.cuda()
     root_path = maml_folder
-
 
     # Define the loss
     if FLAGS.loss == 'mse':
@@ -255,16 +264,21 @@ def main(_):
         loss_fn = image_log_mse
     summary_fn = partial(siren_utils.write_image_summary, image_resolution)
 
-
     try:
         state_dict = torch.load(os.path.join(maml_folder, 'checkpoints/model_maml.pth'),
                                 map_location='cpu')
         model.load_state_dict(state_dict, strict=True)
-        print("No matching model found, training from scratch.")
+
     except:
-        trainingMAML.train(model=model, train_dataloader=dataloader, epochs=FLAGS.maml_epochs, lr=FLAGS.lr,  maml_lr=FLAGS.maml_lr,
-                         steps_til_summary=FLAGS.steps_til_summary, epochs_til_checkpoint=FLAGS.epochs_til_ckpt,
-                         model_dir=root_path, loss_fn=loss_fn, summary_fn=summary_fn)
+        print("No matching model found, training from scratch.")
+        yaml.dump(FLAGS.flag_values_dict(), open(os.path.join(maml_folder, 'FLAGS.yml'), 'w'))
+        trainingMAML.train(model=model, train_dataloader=dataloader, maml_iterations=FLAGS.maml_iterations,
+                           inner_lr=FLAGS.inner_lr, outer_lr=FLAGS.outer_lr,
+                           steps_til_summary=FLAGS.steps_til_summary, epochs_til_checkpoint=FLAGS.epochs_til_ckpt,
+                           model_dir=root_path, loss_fn=loss_fn, summary_fn=summary_fn,
+                           maml_batch_size=FLAGS.maml_batch_size,
+                           maml_adaptation_steps=FLAGS.maml_adaptation_steps)
+
     ref_model = copy.deepcopy(model)
     l1_loss_fn = partial(losses.model_l1_diff, ref_model)
 
@@ -277,24 +291,27 @@ def main(_):
         img = PIL.Image.open(im)
         image_resolution = (img.size[1] // FLAGS.downscaling_factor, img.size[0] // FLAGS.downscaling_factor)
 
-        #run_name = image_name + '_layers' + str(layers) + '_units' + str(hidden_units) + '_model' + FLAGS.model_type
+        # run_name = image_name + '_layers' + str(layers) + '_units' + str(hidden_units) + '_model' + FLAGS.model_type
         coord_dataset = dataio.Implicit2DWrapper(img_dataset, sidelength=image_resolution)
 
-        root_path = os.path.join(experiment_folder,image_name)
-        dataloader = DataLoader(coord_dataset, shuffle=True, batch_size=FLAGS.batch_size, pin_memory=True, num_workers=0)
+        root_path = os.path.join(experiment_folder, image_name)
+        dataloader = DataLoader(coord_dataset, shuffle=True, batch_size=FLAGS.batch_size, pin_memory=True,
+                                num_workers=0)
         trainingAC.train(model=model, train_dataloader=dataloader, epochs=FLAGS.epochs, lr=FLAGS.lr,
-                                steps_til_summary=FLAGS.steps_til_summary, epochs_til_checkpoint=FLAGS.epochs_til_ckpt,
-                                model_dir=root_path, loss_fn=loss_fn, l1_loss_fn=l1_loss_fn, summary_fn=summary_fn, l1_reg=FLAGS.l1_reg,
-                                spec_reg=FLAGS.spec_reg)
+                         steps_til_summary=FLAGS.steps_til_summary, epochs_til_checkpoint=FLAGS.epochs_til_ckpt,
+                         model_dir=root_path, loss_fn=loss_fn, l1_loss_fn=l1_loss_fn, summary_fn=summary_fn,
+                         l1_reg=FLAGS.l1_reg,
+                         spec_reg=FLAGS.spec_reg)
 
         mse, ssim, psnr = utils.check_metrics_full(dataloader, model, image_resolution)
-        mses[image_name] = mse
-        psnrs[image_name] = psnr
-        ssims[image_name] = ssim
-        metrics = {'mse': mses, 'psnr': psnrs, 'ssim': ssims}
-
+        # mses[image_name] = mse
+        # psnrs[image_name] = psnr
+        # ssims[image_name] = ssim
+        metrics = {'mse': mse, 'psnr': psnr, 'ssim': ssim}
 
         with open(os.path.join(root_path, 'result.json'), 'w') as fp:
             json.dump(metrics, fp)
+
+
 if __name__ == '__main__':
     app.run(main)
