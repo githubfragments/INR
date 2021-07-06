@@ -2,11 +2,16 @@
 
 # Lint as: python3
 """Training script."""
+import copy
+
 import yaml
 from absl import app
 from absl import flags
 import sys
 import os
+
+import losses
+
 sys.path.append( os.path.dirname( os.path.dirname( os.path.abspath(__file__) ) ) )
 sys.path.append("siren")
 import PIL
@@ -69,7 +74,7 @@ flags.DEFINE_enum('loss',
                   'mse',
                   ['mse', 'log_mse'],
                   'Loss function to use.')
-
+flags.DEFINE_bool('l1_diff', False, 'Compute L1 as difference to initialization.')
 flags.DEFINE_enum('encoding', 'mlp', ['mlp', 'nerf', 'positional', 'gauss'], 'Input encoding type used')
 
 flags.DEFINE_integer('hidden_dims',
@@ -124,7 +129,10 @@ def get_experiment_folder():
     if FLAGS.bn:
         exp_name = '_'.join([exp_name, 'bn'])
     if FLAGS.l1_reg > 0.0:
-        exp_name = '_'.join([exp_name, 'l1_reg' + str(FLAGS.l1_reg)])
+        if FLAGS.l1_diff:
+            exp_name = '_'.join([exp_name, 'l1_reg_diff' + str(FLAGS.l1_reg)])
+        else:
+            exp_name = '_'.join([exp_name, 'l1_reg' + str(FLAGS.l1_reg)])
     if FLAGS.spec_reg > 0.0:
         exp_name = '_'.join([exp_name, 'spec_reg' + str(FLAGS.spec_reg)])
     if FLAGS.encoding_scale > 0.0:
@@ -226,6 +234,11 @@ def main(_):
         elif FLAGS.loss == 'log_mse':
             loss_fn = image_log_mse
         summary_fn = partial(siren_utils.write_image_summary, image_resolution)
+        l1_loss_fn = losses.model_l1
+        if FLAGS.l1_diff:
+            ref_model = copy.deepcopy(model)
+            l1_loss_fn = partial(losses.model_l1_diff, ref_model)
+
 
         if FLAGS.model_type == 'parallel':
             trainingAC.train_phased(model=model, train_dataloader=dataloader, epochs=FLAGS.epochs, lr=FLAGS.lr,
@@ -235,12 +248,15 @@ def main(_):
         else:
             trainingAC.train(model=model, train_dataloader=dataloader, epochs=FLAGS.epochs, lr=FLAGS.lr,
                          steps_til_summary=FLAGS.steps_til_summary, epochs_til_checkpoint=FLAGS.epochs_til_ckpt,
-                         model_dir=root_path, loss_fn=loss_fn, summary_fn=summary_fn, l1_reg=FLAGS.l1_reg, spec_reg=FLAGS.spec_reg, loss_schedules=None)
+                         model_dir=root_path, loss_fn=loss_fn, summary_fn=summary_fn, l1_reg=FLAGS.l1_reg, l1_loss_fn=l1_loss_fn, spec_reg=FLAGS.spec_reg, loss_schedules=None)
 
         mse, ssim, psnr = utils.check_metrics_full(dataloader, model, image_resolution)
         mses[image_name] = mse
         psnrs[image_name] = psnr
         ssims[image_name] = ssim
+        torch.save(ref_model.state_dict(),
+                   os.path.join(root_path, 'model_init.pth'))
+
     metrics = {'mse': mses, 'psnr': psnrs, 'ssim': ssims}
 
 
